@@ -15,6 +15,7 @@
 //! the separation between the style system implementation and everything else.
 
 use atomic_refcell::AtomicRefCell;
+use context::UpdateAnimationsTasks;
 use data::ElementData;
 use dom::{AnimationRules, LayoutIterator, NodeInfo, TElement, TNode, UnsafeNode};
 use dom::{OpaqueNode, PresentationalHintsSynthetizer};
@@ -30,6 +31,7 @@ use gecko_bindings::bindings::{Gecko_IsLink, Gecko_IsRootElement, Gecko_MatchesE
 use gecko_bindings::bindings::{Gecko_IsUnvisitedLink, Gecko_IsVisitedLink, Gecko_Namespace};
 use gecko_bindings::bindings::{Gecko_SetNodeFlags, Gecko_UnsetNodeFlags};
 use gecko_bindings::bindings::Gecko_ClassOrClassList;
+use gecko_bindings::bindings::Gecko_ElementHasAnimations;
 use gecko_bindings::bindings::Gecko_ElementHasCSSAnimations;
 use gecko_bindings::bindings::Gecko_GetAnimationRule;
 use gecko_bindings::bindings::Gecko_GetHTMLPresentationAttrDeclarationBlock;
@@ -42,6 +44,7 @@ use gecko_bindings::structs;
 use gecko_bindings::structs::{RawGeckoElement, RawGeckoNode};
 use gecko_bindings::structs::{nsIAtom, nsIContent, nsStyleContext};
 use gecko_bindings::structs::EffectCompositor_CascadeLevel as CascadeLevel;
+use gecko_bindings::structs::NODE_HAS_ANIMATION_ONLY_DIRTY_DESCENDANTS_FOR_SERVO;
 use gecko_bindings::structs::NODE_HAS_DIRTY_DESCENDANTS_FOR_SERVO;
 use gecko_bindings::structs::NODE_IS_IN_NATIVE_ANONYMOUS_SUBTREE;
 use gecko_bindings::sugar::ownership::HasArcFFI;
@@ -510,6 +513,18 @@ impl<'le> TElement for GeckoElement<'le> {
         self.unset_flags(NODE_HAS_DIRTY_DESCENDANTS_FOR_SERVO as u32)
     }
 
+    fn has_animation_only_dirty_descendants(&self) -> bool {
+        self.flags() & (NODE_HAS_ANIMATION_ONLY_DIRTY_DESCENDANTS_FOR_SERVO as u32) != 0
+    }
+
+    unsafe fn set_animation_only_dirty_descendants(&self) {
+        self.set_flags(NODE_HAS_ANIMATION_ONLY_DIRTY_DESCENDANTS_FOR_SERVO as u32)
+    }
+
+    unsafe fn unset_animation_only_dirty_descendants(&self) {
+        self.unset_flags(NODE_HAS_ANIMATION_ONLY_DIRTY_DESCENDANTS_FOR_SERVO as u32)
+    }
+
     fn store_children_to_process(&self, _: isize) {
         // This is only used for bottom-up traversal, and is thus a no-op for Gecko.
     }
@@ -541,7 +556,8 @@ impl<'le> TElement for GeckoElement<'le> {
         (self.flags() & node_flags) == node_flags
     }
 
-    fn update_animations(&self, pseudo: Option<&PseudoElement>) {
+    fn update_animations(&self, pseudo: Option<&PseudoElement>,
+                         tasks: UpdateAnimationsTasks) {
         // We have to update animations even if the element has no computed style
         // since it means the element is in a display:none subtree, we should destroy
         // all CSS animations in display:none subtree.
@@ -570,8 +586,14 @@ impl<'le> TElement for GeckoElement<'le> {
         unsafe {
             Gecko_UpdateAnimations(self.0, atom_ptr,
                                    computed_values_opt,
-                                   parent_values_opt);
+                                   parent_values_opt,
+                                   tasks.bits());
         }
+    }
+
+    fn has_animations(&self, pseudo: Option<&PseudoElement>) -> bool {
+        let atom_ptr = PseudoElement::ns_atom_or_null_from_opt(pseudo);
+        unsafe { Gecko_ElementHasAnimations(self.0, atom_ptr) }
     }
 
     fn has_css_animations(&self, pseudo: Option<&PseudoElement>) -> bool {

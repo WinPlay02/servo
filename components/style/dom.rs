@@ -9,6 +9,7 @@
 
 use {Atom, Namespace, LocalName};
 use atomic_refcell::{AtomicRef, AtomicRefCell, AtomicRefMut};
+#[cfg(feature = "gecko")] use context::UpdateAnimationsTasks;
 use data::ElementData;
 use element_state::ElementState;
 use properties::{ComputedValues, PropertyDeclarationBlock};
@@ -309,6 +310,24 @@ pub trait TElement : PartialEq + Debug + Sized + Copy + Clone + ElementExt + Pre
     /// Only safe to call with exclusive access to the element.
     unsafe fn unset_dirty_descendants(&self);
 
+    /// Similar to the dirty_descendants but for representing a descendant of
+    /// the element needs to be updated in animation-only traversal.
+    fn has_animation_only_dirty_descendants(&self) -> bool {
+        false
+    }
+
+    /// Flag that this element has a descendant for animation-only restyle processing.
+    ///
+    /// Only safe to call with exclusive access to the element.
+    unsafe fn set_animation_only_dirty_descendants(&self) {
+    }
+
+    /// Flag that this element has no descendant for animation-only restyle processing.
+    ///
+    /// Only safe to call with exclusive access to the element.
+    unsafe fn unset_animation_only_dirty_descendants(&self) {
+    }
+
     /// Atomically stores the number of children of this node that we will
     /// need to process during bottom-up traversal.
     fn store_children_to_process(&self, n: isize);
@@ -348,12 +367,28 @@ pub trait TElement : PartialEq + Debug + Sized + Copy + Clone + ElementExt + Pre
     /// Returns true if the element has all the specified selector flags.
     fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool;
 
-    /// Creates a task to update CSS Animations on a given (pseudo-)element.
-    /// Note: Gecko only.
-    fn update_animations(&self, _pseudo: Option<&PseudoElement>);
+    /// Creates a task to update various animation state on a given (pseudo-)element.
+    #[cfg(feature = "gecko")]
+    fn update_animations(&self, _pseudo: Option<&PseudoElement>,
+                         tasks: UpdateAnimationsTasks);
+
+    /// Returns true if the element has relevant animations. Relevant
+    /// animations are those animations that are affecting the element's style
+    /// or are scheduled to do so in the future.
+    fn has_animations(&self, _pseudo: Option<&PseudoElement>) -> bool;
 
     /// Returns true if the element has a CSS animation.
     fn has_css_animations(&self, _pseudo: Option<&PseudoElement>) -> bool;
+
+    /// Returns true if the element has animation restyle hints.
+    fn has_animation_restyle_hints(&self) -> bool {
+        let data = match self.borrow_data() {
+            Some(d) => d,
+            None => return false,
+        };
+        return data.get_restyle()
+                   .map_or(false, |r| r.hint.has_animation_hint());
+    }
 }
 
 /// TNode and TElement aren't Send because we want to be careful and explicit

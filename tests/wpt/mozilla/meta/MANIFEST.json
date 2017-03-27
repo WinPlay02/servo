@@ -755,6 +755,18 @@
      {}
     ]
    ],
+   "css/border-image-linear-gradient.html": [
+    [
+     "/_mozilla/css/border-image-linear-gradient.html",
+     [
+      [
+       "/_mozilla/css/border-image-linear-gradient-ref.html",
+       "=="
+      ]
+     ],
+     {}
+    ]
+   ],
    "css/border_black_ridge_a.html": [
     [
      "/_mozilla/css/border_black_ridge_a.html",
@@ -6993,6 +7005,11 @@
      {}
     ]
    ],
+   "css/border-image-linear-gradient-ref.html": [
+    [
+     {}
+    ]
+   ],
    "css/border_black_solid.html": [
     [
      {}
@@ -11037,6 +11054,12 @@
    "css/bug_1345483.html": [
     [
      "/_mozilla/css/bug_1345483.html",
+     {}
+    ]
+   ],
+   "css/calc-number-serialization.html": [
+    [
+     "/_mozilla/css/calc-number-serialization.html",
      {}
     ]
    ],
@@ -20351,6 +20374,14 @@
    "d0bf8fafec5ff2c0cfde8f0d47083ca23b745588",
    "support"
   ],
+  "css/border-image-linear-gradient-ref.html": [
+   "3c1b61477c8a3cb7befc3ab81b80a128b142e3f1",
+   "support"
+  ],
+  "css/border-image-linear-gradient.html": [
+   "40ea388a8a920eaecb2d0d12f998ed60ac3b56e8",
+   "reftest"
+  ],
   "css/border_black_groove.html": [
    "42912352ee8f09ae0ddbac3dce35294dc8608bbe",
    "reftest_node"
@@ -20674,6 +20705,10 @@
   "css/calc-basic.html": [
    "94dc4aac4c546a74add074be0d3e604c8b196888",
    "reftest"
+  ],
+  "css/calc-number-serialization.html": [
+   "b9e77c824d0c96e51d51fb8f1e923d3ab67be027",
+   "testharness"
   ],
   "css/canvas_as_block_element_a.html": [
    "668d93da2dab9722998cc7c5785c20e2ab9a1ced",
@@ -24012,7 +24047,7 @@
    "reftest"
   ],
   "css/viewport_rule_ref.html": [
-   "00bb1ce6ccffc6b6bb0db1565985171ff49f1362",
+   "aa1693b5917599430c3520cc7aebdd275d4c6f19",
    "support"
   ],
   "css/visibility_hidden.html": [
@@ -25088,7 +25123,7 @@
    "testharness"
   ],
   "mozilla/calc.html": [
-   "c333be7c567aebd1ed2f763d0ed644165ae8bd3b",
+   "c239c441c90e4d4ed94458eae5b2defabb47e984",
    "testharness"
   ],
   "mozilla/canvas.initial.reset.2dstate.html": [

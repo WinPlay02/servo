@@ -573,15 +573,14 @@ mod shorthand_serialization {
 
     #[test]
     fn flex_should_serialize_all_available_properties() {
-        use style::values::specified::Number as NumberContainer;
-        use style::values::specified::Percentage as PercentageContainer;
+        use style::values::specified::{Number, Percentage};
 
         let mut properties = Vec::new();
 
-        let grow = NumberContainer(2f32);
-        let shrink = NumberContainer(3f32);
+        let grow = Number::new(2f32);
+        let shrink = Number::new(3f32);
         let basis =
-            LengthOrPercentageOrAutoOrContent::Percentage(PercentageContainer(0.5f32));
+            LengthOrPercentageOrAutoOrContent::Percentage(Percentage(0.5f32));
 
         properties.push(PropertyDeclaration::FlexGrow(grow));
         properties.push(PropertyDeclaration::FlexShrink(shrink));
@@ -1168,6 +1167,33 @@ mod shorthand_serialization {
             let shadow  =  parse_declaration_block(shadow_css);
 
             assert_eq!(shadow.to_css_string(), shadow_css);
+        }
+    }
+
+    mod counter_increment {
+        pub use super::*;
+        pub use style::properties::longhands::counter_increment::SpecifiedValue as CounterIncrement;
+        use style::values::specified::Integer;
+
+        #[test]
+        fn counter_increment_with_properties_should_serialize_correctly() {
+            let mut properties = Vec::new();
+
+            properties.push(("counter1".to_owned(), Integer::new(1)));
+            properties.push(("counter2".to_owned(), Integer::new(-4)));
+
+            let counter_increment = CounterIncrement(properties);
+            let counter_increment_css = "counter1 1 counter2 -4";
+
+            assert_eq!(counter_increment.to_css_string(), counter_increment_css);
+        }
+
+        #[test]
+        fn counter_increment_without_properties_should_serialize_correctly() {
+            let counter_increment = CounterIncrement(Vec::new());
+            let counter_increment_css = "none";
+
+            assert_eq!(counter_increment.to_css_string(), counter_increment_css);
         }
     }
 }
