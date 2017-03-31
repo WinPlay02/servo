@@ -17,7 +17,7 @@
 use atomic_refcell::AtomicRefCell;
 use context::UpdateAnimationsTasks;
 use data::ElementData;
-use dom::{AnimationRules, LayoutIterator, NodeInfo, TElement, TNode, UnsafeNode};
+use dom::{self, AnimationRules, DescendantsBit, LayoutIterator, NodeInfo, TElement, TNode, UnsafeNode};
 use dom::{OpaqueNode, PresentationalHintsSynthetizer};
 use element_state::ElementState;
 use error_reporting::StdoutErrorReporter;
@@ -27,13 +27,13 @@ use gecko::snapshot_helpers;
 use gecko_bindings::bindings;
 use gecko_bindings::bindings::{Gecko_DropStyleChildrenIterator, Gecko_MaybeCreateStyleChildrenIterator};
 use gecko_bindings::bindings::{Gecko_ElementState, Gecko_GetLastChild, Gecko_GetNextStyleChild};
-use gecko_bindings::bindings::{Gecko_IsLink, Gecko_IsRootElement, Gecko_MatchesElement};
-use gecko_bindings::bindings::{Gecko_IsUnvisitedLink, Gecko_IsVisitedLink, Gecko_Namespace};
+use gecko_bindings::bindings::{Gecko_IsRootElement, Gecko_MatchesElement, Gecko_Namespace};
 use gecko_bindings::bindings::{Gecko_SetNodeFlags, Gecko_UnsetNodeFlags};
 use gecko_bindings::bindings::Gecko_ClassOrClassList;
 use gecko_bindings::bindings::Gecko_ElementHasAnimations;
 use gecko_bindings::bindings::Gecko_ElementHasCSSAnimations;
 use gecko_bindings::bindings::Gecko_GetAnimationRule;
+use gecko_bindings::bindings::Gecko_GetExtraContentStyleDeclarations;
 use gecko_bindings::bindings::Gecko_GetHTMLPresentationAttrDeclarationBlock;
 use gecko_bindings::bindings::Gecko_GetStyleAttrDeclarationBlock;
 use gecko_bindings::bindings::Gecko_GetStyleContext;
@@ -465,7 +465,7 @@ impl<'le> TElement for GeckoElement<'le> {
 
     fn get_state(&self) -> ElementState {
         unsafe {
-            ElementState::from_bits_truncate(Gecko_ElementState(self.0) as u32)
+            ElementState::from_bits_truncate(Gecko_ElementState(self.0))
         }
     }
 
@@ -505,8 +505,26 @@ impl<'le> TElement for GeckoElement<'le> {
     }
 
     unsafe fn set_dirty_descendants(&self) {
+        debug_assert!(self.get_data().is_some());
         debug!("Setting dirty descendants: {:?}", self);
         self.set_flags(NODE_HAS_DIRTY_DESCENDANTS_FOR_SERVO as u32)
+    }
+
+    unsafe fn note_descendants<B: DescendantsBit<Self>>(&self) {
+        // FIXME(emilio): We seem to reach this in Gecko's
+        // layout/style/test/test_pseudoelement_state.html, while changing the
+        // state of an anonymous content element which is styled, but whose
+        // parent isn't, presumably because we've cleared the data and haven't
+        // reached it yet.
+        //
+        // Otherwise we should be able to assert this.
+        if self.get_data().is_none() {
+            return;
+        }
+
+        if dom::raw_note_descendants::<Self, B>(*self) {
+            bindings::Gecko_SetOwnerDocumentNeedsStyleFlush(self.0);
+        }
     }
 
     unsafe fn unset_dirty_descendants(&self) {
@@ -619,6 +637,13 @@ impl<'le> PresentationalHintsSynthetizer for GeckoElement<'le> {
                 ApplicableDeclarationBlock::from_declarations(Clone::clone(decl), ServoCascadeLevel::PresHints)
             );
         }
+        let declarations = unsafe { Gecko_GetExtraContentStyleDeclarations(self.0) };
+        let declarations = declarations.and_then(|s| s.as_arc_opt());
+        if let Some(decl) = declarations {
+            hints.push(
+                ApplicableDeclarationBlock::from_declarations(Clone::clone(decl), ServoCascadeLevel::PresHints)
+            );
+        }
     }
 }
 
@@ -705,17 +730,15 @@ impl<'le> ::selectors::Element for GeckoElement<'le> {
     {
         use selectors::matching::*;
         match *pseudo_class {
-            // https://github.com/servo/servo/issues/8718
-            NonTSPseudoClass::AnyLink => unsafe { Gecko_IsLink(self.0) },
-            NonTSPseudoClass::Link => unsafe { Gecko_IsUnvisitedLink(self.0) },
-            NonTSPseudoClass::Visited => unsafe { Gecko_IsVisitedLink(self.0) },
+            NonTSPseudoClass::AnyLink |
+            NonTSPseudoClass::Link |
+            NonTSPseudoClass::Visited |
             NonTSPseudoClass::Active |
             NonTSPseudoClass::Focus |
             NonTSPseudoClass::Hover |
             NonTSPseudoClass::Enabled |
             NonTSPseudoClass::Disabled |
             NonTSPseudoClass::Checked |
-            NonTSPseudoClass::ReadWrite |
             NonTSPseudoClass::Fullscreen |
             NonTSPseudoClass::Indeterminate |
             NonTSPseudoClass::PlaceholderShown |
@@ -731,12 +754,31 @@ impl<'le> ::selectors::Element for GeckoElement<'le> {
             NonTSPseudoClass::MozHandlerDisabled |
             NonTSPseudoClass::MozHandlerCrashed |
             NonTSPseudoClass::Required |
-            NonTSPseudoClass::Optional => {
-                self.get_state().contains(pseudo_class.state_flag())
+            NonTSPseudoClass::Optional |
+            NonTSPseudoClass::MozReadOnly |
+            NonTSPseudoClass::MozReadWrite |
+            NonTSPseudoClass::Unresolved |
+            NonTSPseudoClass::FocusWithin |
+            NonTSPseudoClass::MozDragOver |
+            NonTSPseudoClass::MozDevtoolsHighlighted |
+            NonTSPseudoClass::MozStyleeditorTransitioning |
+            NonTSPseudoClass::MozFocusRing |
+            NonTSPseudoClass::MozHandlerClickToPlay |
+            NonTSPseudoClass::MozHandlerVulnerableUpdatable |
+            NonTSPseudoClass::MozHandlerVulnerableNoUpdate |
+            NonTSPseudoClass::MozMathIncrementScriptLevel |
+            NonTSPseudoClass::InRange |
+            NonTSPseudoClass::OutOfRange |
+            NonTSPseudoClass::Default |
+            NonTSPseudoClass::MozSubmitInvalid |
+            NonTSPseudoClass::MozUIInvalid |
+            NonTSPseudoClass::MozMeterOptimum |
+            NonTSPseudoClass::MozMeterSubOptimum |
+            NonTSPseudoClass::MozMeterSubSubOptimum => {
+                // NB: It's important to use `intersect` instead of `contains`
+                // here, to handle `:any-link` correctly.
+                self.get_state().intersects(pseudo_class.state_flag())
             },
-            NonTSPseudoClass::ReadOnly => {
-                !self.get_state().contains(pseudo_class.state_flag())
-            }
             NonTSPseudoClass::MozFirstNode => {
                 flags_setter(self, HAS_EDGE_CHILD_SELECTOR);
                 let mut elem = self.as_node();

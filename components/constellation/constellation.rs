@@ -87,7 +87,6 @@ use msg::constellation_msg::{FrameId, FrameType, PipelineId};
 use msg::constellation_msg::{Key, KeyModifiers, KeyState};
 use msg::constellation_msg::{PipelineNamespace, PipelineNamespaceId, TraversalDirection};
 use net_traits::{self, IpcSend, ResourceThreads};
-use net_traits::image_cache_thread::ImageCacheThread;
 use net_traits::pub_domains::reg_host;
 use net_traits::storage_thread::{StorageThreadMsg, StorageType};
 use offscreen_gl_context::{GLContextAttributes, GLLimits};
@@ -97,7 +96,7 @@ use profile_traits::time;
 use script_traits::{AnimationState, AnimationTickType, CompositorEvent};
 use script_traits::{ConstellationControlMsg, ConstellationMsg as FromCompositorMsg, DiscardBrowsingContext};
 use script_traits::{DocumentActivity, DocumentState, LayoutControlMsg, LoadData};
-use script_traits::{IFrameLoadInfo, IFrameLoadInfoWithData, IFrameSandboxState, TimerEventRequest};
+use script_traits::{IFrameLoadInfo, IFrameLoadInfoWithData, IFrameSandboxState, TimerSchedulerMsg};
 use script_traits::{LayoutMsg as FromLayoutMsg, ScriptMsg as FromScriptMsg, ScriptThreadFactory};
 use script_traits::{LogEntry, ServiceWorkerMsg, webdriver_msg};
 use script_traits::{MozBrowserErrorType, MozBrowserEvent, WebDriverCommandMsg, WindowSizeData};
@@ -175,10 +174,6 @@ pub struct Constellation<Message, LTF, STF> {
     /// browsing.
     private_resource_threads: ResourceThreads,
 
-    /// A channel for the constellation to send messages to the image
-    /// cache thread.
-    image_cache_thread: ImageCacheThread,
-
     /// A channel for the constellation to send messages to the font
     /// cache thread.
     font_cache_thread: FontCacheThread,
@@ -219,7 +214,7 @@ pub struct Constellation<Message, LTF, STF> {
 
     /// A channel for the constellation to send messages to the
     /// timer thread.
-    scheduler_chan: IpcSender<TimerEventRequest>,
+    scheduler_chan: IpcSender<TimerSchedulerMsg>,
 
     /// A channel for the constellation to send messages to the
     /// Webrender thread.
@@ -301,9 +296,6 @@ pub struct InitialConstellationState {
 
     /// A channel to the bluetooth thread.
     pub bluetooth_thread: IpcSender<BluetoothRequest>,
-
-    /// A channel to the image cache thread.
-    pub image_cache_thread: ImageCacheThread,
 
     /// A channel to the font cache thread.
     pub font_cache_thread: FontCacheThread,
@@ -518,7 +510,6 @@ impl<Message, LTF, STF> Constellation<Message, LTF, STF>
                 bluetooth_thread: state.bluetooth_thread,
                 public_resource_threads: state.public_resource_threads,
                 private_resource_threads: state.private_resource_threads,
-                image_cache_thread: state.image_cache_thread,
                 font_cache_thread: state.font_cache_thread,
                 swmanager_chan: None,
                 swmanager_receiver: swmanager_receiver,
@@ -657,7 +648,6 @@ impl<Message, LTF, STF> Constellation<Message, LTF, STF>
             devtools_chan: self.devtools_chan.clone(),
             bluetooth_thread: self.bluetooth_thread.clone(),
             swmanager_thread: self.swmanager_sender.clone(),
-            image_cache_thread: self.image_cache_thread.clone(),
             font_cache_thread: self.font_cache_thread.clone(),
             resource_threads: resource_threads,
             time_profiler_chan: self.time_profiler_chan.clone(),
@@ -1210,9 +1200,6 @@ impl<Message, LTF, STF> Constellation<Message, LTF, STF>
         let (core_sender, core_receiver) = ipc::channel().expect("Failed to create IPC channel!");
         let (storage_sender, storage_receiver) = ipc::channel().expect("Failed to create IPC channel!");
 
-        debug!("Exiting image cache.");
-        self.image_cache_thread.exit();
-
         debug!("Exiting core resource threads.");
         if let Err(e) = self.public_resource_threads.send(net_traits::CoreResourceMsg::Exit(core_sender)) {
             warn!("Exit resource thread failed ({})", e);
@@ -1252,6 +1239,11 @@ impl<Message, LTF, STF> Constellation<Message, LTF, STF>
             if let Err(e) = chan.send(WebVRMsg::Exit) {
                 warn!("Exit WebVR thread failed ({})", e);
             }
+        }
+
+        debug!("Exiting timer scheduler.");
+        if let Err(e) = self.scheduler_chan.send(TimerSchedulerMsg::Exit) {
+            warn!("Exit timer scheduler failed ({})", e);
         }
 
         debug!("Exiting font cache thread.");

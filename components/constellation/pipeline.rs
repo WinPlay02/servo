@@ -16,15 +16,16 @@ use ipc_channel::ipc::{self, IpcReceiver, IpcSender};
 use ipc_channel::router::ROUTER;
 use layout_traits::LayoutThreadFactory;
 use msg::constellation_msg::{FrameId, FrameType, PipelineId, PipelineNamespaceId};
+use net::image_cache::ImageCacheImpl;
 use net_traits::{IpcSend, ResourceThreads};
-use net_traits::image_cache_thread::ImageCacheThread;
+use net_traits::image_cache::ImageCache;
 use profile_traits::mem as profile_mem;
 use profile_traits::time;
 use script_traits::{ConstellationControlMsg, DevicePixel, DiscardBrowsingContext};
 use script_traits::{DocumentActivity, InitialScriptState};
 use script_traits::{LayoutControlMsg, LayoutMsg, LoadData, MozBrowserEvent};
 use script_traits::{NewLayoutInfo, SWManagerMsg, SWManagerSenders, ScriptMsg};
-use script_traits::{ScriptThreadFactory, TimerEventRequest, WindowSizeData};
+use script_traits::{ScriptThreadFactory, TimerSchedulerMsg, WindowSizeData};
 use servo_config::opts::{self, Opts};
 use servo_config::prefs::{PREFS, Pref};
 use servo_url::ServoUrl;
@@ -34,6 +35,7 @@ use std::env;
 use std::ffi::OsStr;
 use std::process;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use style_traits::CSSPixel;
 use webrender_traits;
@@ -119,7 +121,7 @@ pub struct InitialPipelineState {
     pub layout_to_constellation_chan: IpcSender<LayoutMsg>,
 
     /// A channel to schedule timer events.
-    pub scheduler_chan: IpcSender<TimerEventRequest>,
+    pub scheduler_chan: IpcSender<TimerSchedulerMsg>,
 
     /// A channel to the compositor.
     pub compositor_proxy: Box<CompositorProxy + 'static + Send>,
@@ -132,9 +134,6 @@ pub struct InitialPipelineState {
 
     /// A channel to the service worker manager thread
     pub swmanager_thread: IpcSender<SWManagerMsg>,
-
-    /// A channel to the image cache thread.
-    pub image_cache_thread: ImageCacheThread,
 
     /// A channel to the font cache thread.
     pub font_cache_thread: FontCacheThread,
@@ -250,7 +249,6 @@ impl Pipeline {
                     devtools_chan: script_to_devtools_chan,
                     bluetooth_thread: state.bluetooth_thread,
                     swmanager_thread: state.swmanager_thread,
-                    image_cache_thread: state.image_cache_thread,
                     font_cache_thread: state.font_cache_thread,
                     resource_threads: state.resource_threads,
                     time_profiler_chan: state.time_profiler_chan,
@@ -447,11 +445,10 @@ pub struct UnprivilegedPipelineContent {
     parent_info: Option<(PipelineId, FrameType)>,
     constellation_chan: IpcSender<ScriptMsg>,
     layout_to_constellation_chan: IpcSender<LayoutMsg>,
-    scheduler_chan: IpcSender<TimerEventRequest>,
+    scheduler_chan: IpcSender<TimerSchedulerMsg>,
     devtools_chan: Option<IpcSender<ScriptToDevtoolsControlMsg>>,
     bluetooth_thread: IpcSender<BluetoothRequest>,
     swmanager_thread: IpcSender<SWManagerMsg>,
-    image_cache_thread: ImageCacheThread,
     font_cache_thread: FontCacheThread,
     resource_threads: ResourceThreads,
     time_profiler_chan: time::ProfilerChan,
@@ -477,6 +474,7 @@ impl UnprivilegedPipelineContent {
         where LTF: LayoutThreadFactory<Message=Message>,
               STF: ScriptThreadFactory<Message=Message>
     {
+        let image_cache = Arc::new(ImageCacheImpl::new(self.webrender_api_sender.create_api()));
         let layout_pair = STF::create(InitialScriptState {
             id: self.id,
             frame_id: self.frame_id,
@@ -489,7 +487,7 @@ impl UnprivilegedPipelineContent {
             scheduler_chan: self.scheduler_chan,
             bluetooth_thread: self.bluetooth_thread,
             resource_threads: self.resource_threads,
-            image_cache_thread: self.image_cache_thread.clone(),
+            image_cache: image_cache.clone(),
             time_profiler_chan: self.time_profiler_chan.clone(),
             mem_profiler_chan: self.mem_profiler_chan.clone(),
             devtools_chan: self.devtools_chan,
@@ -507,7 +505,7 @@ impl UnprivilegedPipelineContent {
                     self.pipeline_port,
                     self.layout_to_constellation_chan,
                     self.script_chan,
-                    self.image_cache_thread,
+                    image_cache.clone(),
                     self.font_cache_thread,
                     self.time_profiler_chan,
                     self.mem_profiler_chan,

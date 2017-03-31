@@ -59,12 +59,13 @@ use std::marker::PhantomData;
 use std::mem::transmute;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use style;
 use style::attr::AttrValue;
 use style::computed_values::display;
 use style::context::{QuirksMode, SharedStyleContext};
 use style::data::ElementData;
-use style::dom::{LayoutIterator, NodeInfo, OpaqueNode, PresentationalHintsSynthetizer, TElement, TNode};
-use style::dom::UnsafeNode;
+use style::dom::{DescendantsBit, DirtyDescendants, LayoutIterator, NodeInfo, OpaqueNode};
+use style::dom::{PresentationalHintsSynthetizer, TElement, TNode, UnsafeNode};
 use style::element_state::*;
 use style::properties::{ComputedValues, PropertyDeclarationBlock};
 use style::selector_parser::{NonTSPseudoClass, PseudoElement, SelectorImpl};
@@ -408,6 +409,11 @@ impl<'le> TElement for ServoLayoutElement<'le> {
         unsafe { self.as_node().node.get_flag(HAS_DIRTY_DESCENDANTS) }
     }
 
+    unsafe fn note_descendants<B: DescendantsBit<Self>>(&self) {
+        debug_assert!(self.get_data().is_some());
+        style::dom::raw_note_descendants::<Self, B>(*self);
+    }
+
     unsafe fn set_dirty_descendants(&self) {
         debug_assert!(self.as_node().node.get_flag(IS_IN_DOC));
         self.as_node().node.set_flag(HAS_DIRTY_DESCENDANTS, true)
@@ -487,33 +493,27 @@ impl<'le> ServoLayoutElement<'le> {
         }
     }
 
+    // FIXME(bholley): This should be merged with TElement::note_descendants,
+    // but that requires re-testing and possibly fixing the broken callers given
+    // the FIXME below, which I don't have time to do right now.
+    //
+    // FIXME(emilio): We'd also need to relax the invariant in note_descendants
+    // re. the data already available I think.
     pub unsafe fn note_dirty_descendant(&self) {
         use ::selectors::Element;
 
         let mut current = Some(*self);
         while let Some(el) = current {
             // FIXME(bholley): Ideally we'd have the invariant that any element
-            // with has_dirty_descendants also has the bit set on all its ancestors.
-            // However, there are currently some corner-cases where we get that wrong.
-            // I have in-flight patches to fix all this stuff up, so we just always
-            // propagate this bit for now.
+            // with has_dirty_descendants also has the bit set on all its
+            // ancestors.  However, there are currently some corner-cases where
+            // we get that wrong.  I have in-flight patches to fix all this
+            // stuff up, so we just always propagate this bit for now.
             el.set_dirty_descendants();
             current = el.parent_element();
         }
 
-        debug_assert!(self.dirty_descendants_bit_is_propagated());
-    }
-
-    fn dirty_descendants_bit_is_propagated(&self) -> bool {
-        use ::selectors::Element;
-
-        let mut current = Some(*self);
-        while let Some(el) = current {
-            if !el.has_dirty_descendants() { return false; }
-            current = el.parent_element();
-        }
-
-        true
+        debug_assert!(self.descendants_bit_is_propagated::<DirtyDescendants>());
     }
 }
 
