@@ -29,6 +29,7 @@ use hyper_serde::Serde;
 use ipc_channel::ipc::{self, IpcSender};
 use js::jsapi::{HandleValue, JSContext};
 use js::jsval::UndefinedValue;
+use msg::constellation_msg::BrowsingContextId;
 use msg::constellation_msg::PipelineId;
 use net_traits::CookieSource::{HTTP, NonHTTP};
 use net_traits::CoreResourceMsg::{GetCookiesDataForUrl, SetCookieForUrl};
@@ -109,23 +110,23 @@ pub fn handle_execute_async_script(documents: &Documents,
     window.upcast::<GlobalScope>().evaluate_js_on_global_with_result(&eval, rval.handle_mut());
 }
 
-pub fn handle_get_frame_id(documents: &Documents,
-                           pipeline: PipelineId,
-                           webdriver_frame_id: WebDriverFrameId,
-                           reply: IpcSender<Result<Option<PipelineId>, ()>>) {
+pub fn handle_get_browsing_context_id(documents: &Documents,
+                                      pipeline: PipelineId,
+                                      webdriver_frame_id: WebDriverFrameId,
+                                      reply: IpcSender<Result<BrowsingContextId, ()>>) {
     let result = match webdriver_frame_id {
         WebDriverFrameId::Short(_) => {
             // This isn't supported yet
-            Ok(None)
+            Err(())
         },
         WebDriverFrameId::Element(x) => {
             find_node_by_unique_id(documents, pipeline, x)
-                .and_then(|node| node.downcast::<HTMLIFrameElement>().map(|elem| elem.pipeline_id()))
+                .and_then(|node| node.downcast::<HTMLIFrameElement>().and_then(|elem| elem.browsing_context_id()))
                 .ok_or(())
         },
         WebDriverFrameId::Parent => {
             documents.find_window(pipeline)
-                .map(|window| window.parent_info().map(|(parent_id, _)| parent_id))
+                .and_then(|window| window.window_proxy().parent().map(|parent| parent.browsing_context_id()))
                 .ok_or(())
         }
     };
@@ -182,9 +183,9 @@ pub fn handle_get_active_element(documents: &Documents,
 
 pub fn handle_get_cookies(documents: &Documents,
                           pipeline: PipelineId,
-                          reply: IpcSender<Vec<Serde<Cookie>>>) {
+                          reply: IpcSender<Vec<Serde<Cookie<'static>>>>) {
     // TODO: Return an error if the pipeline doesn't exist?
-    let cookies: Vec<Serde<Cookie>> = match documents.find_document(pipeline) {
+    let cookies = match documents.find_document(pipeline) {
         None => Vec::new(),
         Some(document) => {
             let url = document.url();
@@ -202,9 +203,9 @@ pub fn handle_get_cookies(documents: &Documents,
 pub fn handle_get_cookie(documents: &Documents,
                          pipeline: PipelineId,
                          name: String,
-                         reply: IpcSender<Vec<Serde<Cookie>>>) {
+                         reply: IpcSender<Vec<Serde<Cookie<'static>>>>) {
     // TODO: Return an error if the pipeline doesn't exist?
-    let cookies: Vec<Serde<Cookie>> = match documents.find_document(pipeline) {
+    let cookies = match documents.find_document(pipeline) {
         None => Vec::new(),
         Some(document) => {
             let url = document.url();
@@ -215,13 +216,13 @@ pub fn handle_get_cookie(documents: &Documents,
             receiver.recv().unwrap()
         },
     };
-    reply.send(cookies.into_iter().filter(|c| c.name == &*name).collect()).unwrap();
+    reply.send(cookies.into_iter().filter(|c| c.name() == &*name).collect()).unwrap();
 }
 
 // https://w3c.github.io/webdriver/webdriver-spec.html#add-cookie
 pub fn handle_add_cookie(documents: &Documents,
                          pipeline: PipelineId,
-                         cookie: Cookie,
+                         cookie: Cookie<'static>,
                          reply: IpcSender<Result<(), WebDriverCookieError>>) {
     // TODO: Return a different error if the pipeline doesn't exist?
     let document = match documents.find_document(pipeline) {
@@ -229,22 +230,24 @@ pub fn handle_add_cookie(documents: &Documents,
         None => return reply.send(Err(WebDriverCookieError::UnableToSetCookie)).unwrap(),
     };
     let url = document.url();
-    let method = if cookie.httponly {
+    let method = if cookie.http_only() {
         HTTP
     } else {
         NonHTTP
     };
-    reply.send(match (document.is_cookie_averse(), cookie.domain.clone()) {
+
+    let domain = cookie.domain().map(ToOwned::to_owned);
+    reply.send(match (document.is_cookie_averse(), domain) {
         (true, _) => Err(WebDriverCookieError::InvalidDomain),
-        (false, Some(ref domain)) if url.host_str().map(|x| { x == &**domain }).unwrap_or(false) => {
+        (false, Some(ref domain)) if url.host_str().map(|x| { x == domain }).unwrap_or(false) => {
             let _ = document.window().upcast::<GlobalScope>().resource_threads().send(
-                SetCookieForUrl(url, cookie, method)
+                SetCookieForUrl(url, Serde(cookie), method)
             );
             Ok(())
         },
         (false, None) => {
             let _ = document.window().upcast::<GlobalScope>().resource_threads().send(
-                SetCookieForUrl(url, cookie, method)
+                SetCookieForUrl(url, Serde(cookie), method)
             );
             Ok(())
         },

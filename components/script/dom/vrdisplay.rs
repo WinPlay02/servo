@@ -71,7 +71,9 @@ pub struct VRDisplay {
     frame_data_status: Cell<VRFrameDataStatus>,
     #[ignore_heap_size_of = "channels are hard"]
     frame_data_receiver: DOMRefCell<Option<IpcReceiver<Result<Vec<u8>, ()>>>>,
-    running_display_raf: Cell<bool>
+    running_display_raf: Cell<bool>,
+    paused: Cell<bool>,
+    stopped_on_pause: Cell<bool>,
 }
 
 unsafe_no_jsmanaged_fields!(WebVRDisplayData);
@@ -112,6 +114,12 @@ impl VRDisplay {
             frame_data_status: Cell::new(VRFrameDataStatus::Waiting),
             frame_data_receiver: DOMRefCell::new(None),
             running_display_raf: Cell::new(false),
+            // Some VR implementations (e.g. Daydream) can be paused in some life cycle situations
+            // such as showing and hiding the controller pairing screen.
+            paused: Cell::new(false),
+            // This flag is set when the Display was presenting when it received a VR Pause event.
+            // When the VR Resume event is received and the flag is set, VR presentation automatically restarts.
+            stopped_on_pause: Cell::new(false)
         }
     }
 
@@ -161,7 +169,7 @@ impl VRDisplayMethods for VRDisplay {
 
     // https://w3c.github.io/webvr/#dom-vrdisplay-displayid
     fn DisplayId(&self) -> u32 {
-        self.display.borrow().display_id as u32
+        self.display.borrow().display_id
     }
 
     // https://w3c.github.io/webvr/#dom-vrdisplay-displayname
@@ -188,7 +196,7 @@ impl VRDisplayMethods for VRDisplay {
         // If not presenting we fetch inmediante VRFrameData
         let (sender, receiver) = ipc::channel().unwrap();
         self.webvr_thread().send(WebVRMsg::GetFrameData(self.global().pipeline_id(),
-                                                        self.get_display_id(),
+                                                        self.DisplayId(),
                                                         self.depth_near.get(),
                                                         self.depth_far.get(),
                                                         sender)).unwrap();
@@ -213,7 +221,7 @@ impl VRDisplayMethods for VRDisplay {
     fn ResetPose(&self) {
         let (sender, receiver) = ipc::channel().unwrap();
         self.webvr_thread().send(WebVRMsg::ResetPose(self.global().pipeline_id(),
-                                                     self.get_display_id(),
+                                                     self.DisplayId(),
                                                      sender)).unwrap();
         if let Ok(data) = receiver.recv().unwrap() {
             // Some VRDisplay data might change after calling ResetPose()
@@ -378,7 +386,7 @@ impl VRDisplayMethods for VRDisplay {
         }
 
         let api_sender = self.layer_ctx.get().unwrap().ipc_renderer();
-        let display_id = self.display.borrow().display_id;
+        let display_id = self.display.borrow().display_id as u64;
         let layer = self.layer.borrow();
         let msg = VRCompositorCommand::SubmitFrame(display_id, layer.left_bounds, layer.right_bounds);
         api_sender.send(CanvasMsg::WebVR(msg)).unwrap();
@@ -388,10 +396,6 @@ impl VRDisplayMethods for VRDisplay {
 impl VRDisplay {
     fn webvr_thread(&self) -> IpcSender<WebVRMsg> {
         self.global().as_window().webvr_thread().expect("Shouldn't arrive here with WebVR disabled")
-    }
-
-    pub fn get_display_id(&self) -> u64 {
-        self.display.borrow().display_id
     }
 
     pub fn update_display(&self, display: &WebVRDisplayData) {
@@ -432,6 +436,30 @@ impl VRDisplay {
                 // Change event doesn't exist in WebVR spec.
                 // So we update display data but don't notify JS.
                 self.update_display(&display);
+            },
+            WebVRDisplayEvent::Pause(_) => {
+                if self.paused.get() {
+                    return;
+                }
+                self.paused.set(true);
+                if self.presenting.get() {
+                    self.stop_present();
+                    self.stopped_on_pause.set(true);
+                }
+
+            },
+            WebVRDisplayEvent::Resume(_) => {
+                self.paused.set(false);
+                if self.stopped_on_pause.get() {
+                    self.stopped_on_pause.set(false);
+                    self.init_present();
+                }
+            },
+            WebVRDisplayEvent::Exit(_) => {
+                self.stopped_on_pause.set(false);
+                if self.presenting.get() {
+                    self.stop_present();
+                }
             }
         };
     }
@@ -447,7 +475,7 @@ impl VRDisplay {
         let (sync_sender, sync_receiver) = ipc::channel().unwrap();
         *self.frame_data_receiver.borrow_mut() = Some(sync_receiver);
 
-        let display_id = self.display.borrow().display_id;
+        let display_id = self.display.borrow().display_id as u64;
         let api_sender = self.layer_ctx.get().unwrap().ipc_renderer();
         let js_sender = self.global().script_chan();
         let address = Trusted::new(&*self);
@@ -497,7 +525,7 @@ impl VRDisplay {
         *self.frame_data_receiver.borrow_mut() = None;
 
         let api_sender = self.layer_ctx.get().unwrap().ipc_renderer();
-        let display_id = self.display.borrow().display_id;
+        let display_id = self.display.borrow().display_id as u64;
         let msg = VRCompositorCommand::Release(display_id);
         api_sender.send(CanvasMsg::WebVR(msg)).unwrap();
     }

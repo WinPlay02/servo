@@ -41,7 +41,7 @@ var widthTests = [
     ['calc(10px + 10em - 10px)', 'calc(10em + 0px)', '160px'],
 
     // Fold absolute units
-    ['calc(1px + 1pt + 1pc + 1in + 1cm + 1mm)', 'calc(155.88333333333333px)', '155.88333333333333px'],
+    ['calc(1px + 1pt + 1pc + 1in + 1cm + 1mm)', 'calc(155.91666666666666px)', '155.91666666666666px'],
 
     // Alphabetical order
     ['calc(0ch + 0px + 0pt + 0pc + 0in + 0cm + 0mm + 0rem + 0em + 0ex + 0% + 0vw + 0vh + 0vmin + 0vmax)',
@@ -142,7 +142,7 @@ var otherProperties = [
   ['border-width', 'calc(1px)', 'calc(1px)'],
   ['border-spacing', 'calc(1px)', 'calc(1px)'],
   ['transform-origin', 'calc(1px + 0%)', 'calc(1px + 0%) 50% 0px'],
-  ['perspective-origin', 'calc(1px + 0%)', 'calc(1px + 0%) 50%'],
+  ['perspective-origin', 'calc(1px + 0%)', 'calc(1px + 0%) center'],
   ['background-size', 'calc(1px + 0%)', 'calc(1px + 0%) auto'],
   ['background-position', 'calc(1px + 0%) calc(2px + 0%)', 'calc(1px + 0%) calc(2px + 0%)'],
   ['border-top-left-radius', 'calc(1px + 0%)', 'calc(1px + 0%) calc(1px + 0%)'],
